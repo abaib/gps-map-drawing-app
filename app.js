@@ -12,6 +12,12 @@ class MapDrawingApp {
         this.layers = {};
         this.linesLayer = null;
         this.baseLayer = 'street';
+        this.selectedLine = null;
+        this.isDragging = false;
+        this.draggedPoint = null;
+        this.mapRotation = 0;
+        this.isRotating = false;
+        this.rotateStartAngle = 0;
         
         this.init();
     }
@@ -23,17 +29,19 @@ class MapDrawingApp {
     }
     
     initializeMap() {
-        // Initialize map centered on Madinah
         this.map = L.map('map', {
             center: [24.4539, 39.5773],
             zoom: 13,
-            zoomControl: false
+            zoomControl: false,
+            rotate: true,
+            touchRotate: true,
+            rotateControl: {
+                closeOnZeroBearing: false
+            }
         });
         
-        // Add zoom control to top right
         L.control.zoom({ position: 'topright' }).addTo(this.map);
         
-        // Create base layers
         this.layers.street = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '© OpenStreetMap contributors',
             maxZoom: 19
@@ -44,31 +52,59 @@ class MapDrawingApp {
             maxZoom: 19
         });
         
-        // Add default layer
         this.layers.street.addTo(this.map);
-        
-        // Create layer for lines
         this.linesLayer = L.layerGroup().addTo(this.map);
         
-        // Map click event
         this.map.on('click', (e) => this.handleMapClick(e));
+        this.setupRotateControls();
+    }
+    
+    setupRotateControls() {
+        const mapContainer = this.map.getContainer();
+        let startBearing = 0;
+        let startAngle = 0;
+        
+        mapContainer.addEventListener('mousedown', (e) => {
+            if (this.mode === 'rotate' && e.shiftKey) {
+                this.isRotating = true;
+                const center = this.map.getSize().divideBy(2);
+                startAngle = Math.atan2(e.clientY - center.y, e.clientX - center.x);
+                startBearing = this.mapRotation;
+                e.preventDefault();
+            }
+        });
+        
+        mapContainer.addEventListener('mousemove', (e) => {
+            if (this.isRotating) {
+                const center = this.map.getSize().divideBy(2);
+                const angle = Math.atan2(e.clientY - center.y, e.clientX - center.x);
+                const diff = (angle - startAngle) * 180 / Math.PI;
+                this.mapRotation = (startBearing + diff) % 360;
+                this.rotateMap(this.mapRotation);
+            }
+        });
+        
+        mapContainer.addEventListener('mouseup', () => {
+            this.isRotating = false;
+        });
+    }
+    
+    rotateMap(angle) {
+        const mapContainer = this.map.getContainer();
+        mapContainer.style.transform = `rotate(${angle}deg)`;
     }
     
     setupEventListeners() {
-        // Toolbar buttons
         document.getElementById('drawBtn').addEventListener('click', () => this.setMode('draw'));
         document.getElementById('selectBtn').addEventListener('click', () => this.setMode('select'));
-        document.getElementById('deleteBtn').addEventListener('click', () => this.setMode('delete'));
+        document.getElementById('rotateBtn').addEventListener('click', () => this.setMode('rotate'));
         
-        // Layer buttons
         document.getElementById('streetBtn').addEventListener('click', () => this.switchLayer('street'));
         document.getElementById('satelliteBtn').addEventListener('click', () => this.switchLayer('satellite'));
         
-        // GPS capture buttons
         document.getElementById('captureStartBtn').addEventListener('click', () => this.captureStartPoint());
         document.getElementById('captureEndBtn').addEventListener('click', () => this.captureEndPoint());
         
-        // Save & Export buttons
         document.getElementById('saveBtn').addEventListener('click', () => this.saveDrawing());
         document.getElementById('loadInput').addEventListener('change', (e) => this.loadDrawing(e));
         document.getElementById('excelBtn').addEventListener('click', () => this.exportToExcel());
@@ -78,42 +114,51 @@ class MapDrawingApp {
     setMode(mode) {
         this.mode = mode;
         
-        // Update button states
         document.querySelectorAll('.toolbar .btn').forEach(btn => btn.classList.remove('active'));
         document.getElementById(`${mode}Btn`).classList.add('active');
         
-        // Clear temp start point if switching modes
+        const mapContainer = this.map.getContainer();
+        if (mode === 'rotate') {
+            mapContainer.classList.add('map-rotate');
+        } else {
+            mapContainer.classList.remove('map-rotate');
+        }
+        
         if (this.tempStartPoint && this.tempStartPoint.marker) {
             this.tempStartPoint.marker.remove();
             this.tempStartPoint = null;
+        }
+        
+        if (this.selectedLine) {
+            this.deselectLine();
         }
     }
     
     switchLayer(layer) {
         this.baseLayer = layer;
-        
-        // Remove all base layers
         Object.values(this.layers).forEach(l => l.remove());
-        
-        // Add selected layer
         this.layers[layer].addTo(this.map);
         
-        // Update button states
         document.getElementById('streetBtn').classList.toggle('active', layer === 'street');
         document.getElementById('satelliteBtn').classList.toggle('active', layer === 'satellite');
     }
     
     handleMapClick(e) {
+        if (this.mode === 'rotate') return;
+        
+        if (this.mode === 'select') {
+            this.handleSelectClick(e);
+            return;
+        }
+        
         if (this.mode !== 'draw') return;
         
         if (!this.tempStartPoint) {
-            // First click - set start point
             this.tempStartPoint = {
                 lat: e.latlng.lat,
                 lng: e.latlng.lng
             };
             
-            // Add temporary marker
             this.tempStartPoint.marker = L.circleMarker([e.latlng.lat, e.latlng.lng], {
                 radius: 6,
                 fillColor: '#3b82f6',
@@ -123,17 +168,142 @@ class MapDrawingApp {
                 fillOpacity: 0.8
             }).addTo(this.linesLayer);
         } else {
-            // Second click - create line
             const endPoint = {
                 lat: e.latlng.lat,
                 lng: e.latlng.lng
             };
             
             this.createLine(this.tempStartPoint, endPoint);
-            
-            // Remove temporary marker
             this.tempStartPoint.marker.remove();
             this.tempStartPoint = null;
+        }
+    }
+    
+    handleSelectClick(e) {
+        let clickedLine = null;
+        const clickPoint = e.latlng;
+        
+        for (let line of this.lines) {
+            const distance = this.distanceToLine(clickPoint, line.start, line.end);
+            if (distance < 20) {
+                clickedLine = line;
+                break;
+            }
+        }
+        
+        if (clickedLine) {
+            this.selectLine(clickedLine);
+        } else {
+            this.deselectLine();
+        }
+    }
+    
+    distanceToLine(point, lineStart, lineEnd) {
+        const p = this.map.latLngToContainerPoint(point);
+        const p1 = this.map.latLngToContainerPoint([lineStart.lat, lineStart.lng]);
+        const p2 = this.map.latLngToContainerPoint([lineEnd.lat, lineEnd.lng]);
+        
+        const dx = p2.x - p1.x;
+        const dy = p2.y - p1.y;
+        const len2 = dx * dx + dy * dy;
+        
+        if (len2 === 0) return Math.sqrt((p.x - p1.x) ** 2 + (p.y - p1.y) ** 2);
+        
+        let t = ((p.x - p1.x) * dx + (p.y - p1.y) * dy) / len2;
+        t = Math.max(0, Math.min(1, t));
+        
+        const projX = p1.x + t * dx;
+        const projY = p1.y + t * dy;
+        
+        return Math.sqrt((p.x - projX) ** 2 + (p.y - projY) ** 2);
+    }
+    
+    selectLine(line) {
+        this.deselectLine();
+        this.selectedLine = line;
+        
+        line.polyline.setStyle({ color: '#f59e0b', weight: 4 });
+        
+        const row = document.querySelector(`tr[data-line-id="${line.id}"]`);
+        if (row) row.classList.add('selected');
+        
+        this.makeDraggable(line);
+    }
+    
+    deselectLine() {
+        if (this.selectedLine) {
+            this.selectedLine.polyline.setStyle({ color: '#3b82f6', weight: 3 });
+            
+            const row = document.querySelector(`tr[data-line-id="${this.selectedLine.id}"]`);
+            if (row) row.classList.remove('selected');
+            
+            this.removeDraggable(this.selectedLine);
+            this.selectedLine = null;
+        }
+    }
+    
+    makeDraggable(line) {
+        line.startMarker.dragging = true;
+        line.endMarker.dragging = true;
+        
+        line.startMarker.on('mousedown', () => {
+            this.isDragging = true;
+            this.draggedPoint = { line: line, point: 'start' };
+        });
+        
+        line.endMarker.on('mousedown', () => {
+            this.isDragging = true;
+            this.draggedPoint = { line: line, point: 'end' };
+        });
+        
+        this.map.on('mousemove', (e) => {
+            if (this.isDragging && this.draggedPoint) {
+                const newPos = { lat: e.latlng.lat, lng: e.latlng.lng };
+                
+                if (this.draggedPoint.point === 'start') {
+                    line.start = newPos;
+                    line.startMarker.setLatLng([newPos.lat, newPos.lng]);
+                } else {
+                    line.end = newPos;
+                    line.endMarker.setLatLng([newPos.lat, newPos.lng]);
+                }
+                
+                line.polyline.setLatLngs([[line.start.lat, line.start.lng], [line.end.lat, line.end.lng]]);
+                
+                const midpoint = [(line.start.lat + line.end.lat) / 2, (line.start.lng + line.end.lng) / 2];
+                line.distance = this.calculateDistance(line.start.lat, line.start.lng, line.end.lat, line.end.lng);
+                
+                line.distanceLabel.setLatLng(midpoint);
+                line.distanceLabel.setIcon(L.divIcon({
+                    className: 'distance-label',
+                    html: `<div style="background: white; padding: 4px 8px; border-radius: 4px; border: 2px solid #3b82f6; font-weight: bold; font-size: 12px; white-space: nowrap;">${line.distance.toFixed(2)} m</div>`,
+                    iconSize: [60, 20]
+                }));
+                
+                this.updateTableRow(line);
+            }
+        });
+        
+        this.map.on('mouseup', () => {
+            this.isDragging = false;
+            this.draggedPoint = null;
+        });
+        
+        line.startMarker._icon.style.cursor = 'move';
+        line.endMarker._icon.style.cursor = 'move';
+    }
+    
+    removeDraggable(line) {
+        line.startMarker.off('mousedown');
+        line.endMarker.off('mousedown');
+        line.startMarker._icon.style.cursor = '';
+        line.endMarker._icon.style.cursor = '';
+    }
+    
+    updateTableRow(line) {
+        const row = document.querySelector(`tr[data-line-id="${line.id}"]`);
+        if (row) {
+            row.cells[1].textContent = line.distance.toFixed(2);
         }
     }
     
@@ -141,7 +311,6 @@ class MapDrawingApp {
         const distance = this.calculateDistance(start.lat, start.lng, end.lat, end.lng);
         const lineId = `A${this.lineCounter++}`;
         
-        // Create polyline
         const polyline = L.polyline([
             [start.lat, start.lng],
             [end.lat, end.lng]
@@ -151,7 +320,6 @@ class MapDrawingApp {
             opacity: 0.8
         }).addTo(this.linesLayer);
         
-        // Create start marker
         const startMarker = L.circleMarker([start.lat, start.lng], {
             radius: 6,
             fillColor: '#3b82f6',
@@ -161,7 +329,6 @@ class MapDrawingApp {
             fillOpacity: 0.8
         }).addTo(this.linesLayer);
         
-        // Create end marker
         const endMarker = L.circleMarker([end.lat, end.lng], {
             radius: 8,
             fillColor: '#ef4444',
@@ -171,7 +338,6 @@ class MapDrawingApp {
             fillOpacity: 0.8
         }).addTo(this.linesLayer);
         
-        // Create distance label
         const midpoint = [(start.lat + end.lat) / 2, (start.lng + end.lng) / 2];
         const distanceLabel = L.marker(midpoint, {
             icon: L.divIcon({
@@ -181,7 +347,6 @@ class MapDrawingApp {
             })
         }).addTo(this.linesLayer);
         
-        // Store line data
         const line = {
             id: lineId,
             start: { lat: start.lat, lng: start.lng },
@@ -202,7 +367,7 @@ class MapDrawingApp {
     }
     
     calculateDistance(lat1, lon1, lat2, lon2) {
-        const R = 6371000; // Earth's radius in meters
+        const R = 6371000;
         const φ1 = lat1 * Math.PI / 180;
         const φ2 = lat2 * Math.PI / 180;
         const Δφ = (lat2 - lat1) * Math.PI / 180;
@@ -223,8 +388,6 @@ class MapDrawingApp {
         
         row.innerHTML = `
             <td>${line.id}</td>
-            <td>${line.start.lat.toFixed(6)}, ${line.start.lng.toFixed(6)}</td>
-            <td>${line.end.lat.toFixed(6)}, ${line.end.lng.toFixed(6)}</td>
             <td>${line.distance.toFixed(2)}</td>
             <td><input type="number" step="0.01" value="${line.depth}" data-field="depth"></td>
             <td><input type="number" step="0.01" value="${line.width}" data-field="width"></td>
@@ -247,7 +410,6 @@ class MapDrawingApp {
             <td><button class="delete-btn" data-line-id="${line.id}">Delete</button></td>
         `;
         
-        // Add event listeners for inputs
         row.querySelectorAll('input, select').forEach(input => {
             input.addEventListener('change', (e) => {
                 const field = e.target.dataset.field;
@@ -258,7 +420,6 @@ class MapDrawingApp {
             });
         });
         
-        // Add delete button listener
         row.querySelector('.delete-btn').addEventListener('click', () => {
             this.deleteLine(line.id);
         });
@@ -270,16 +431,17 @@ class MapDrawingApp {
         const line = this.lines.find(l => l.id === lineId);
         if (!line) return;
         
-        // Remove from map
+        if (this.selectedLine && this.selectedLine.id === lineId) {
+            this.deselectLine();
+        }
+        
         line.polyline.remove();
         line.startMarker.remove();
         line.endMarker.remove();
         line.distanceLabel.remove();
         
-        // Remove from array
         this.lines = this.lines.filter(l => l.id !== lineId);
         
-        // Remove from table
         const row = document.querySelector(`tr[data-line-id="${lineId}"]`);
         if (row) row.remove();
     }
@@ -298,16 +460,13 @@ class MapDrawingApp {
                 
                 this.currentGpsPosition = { lat: latitude, lng: longitude };
                 
-                // Update status
                 const statusEl = document.getElementById('gpsStatus');
                 statusEl.textContent = 'Active';
                 statusEl.classList.add('status-active');
                 
-                // Show accuracy
                 document.getElementById('gpsAccuracyRow').style.display = 'flex';
                 document.getElementById('gpsAccuracy').textContent = `${accuracy.toFixed(1)} m`;
                 
-                // Update or create GPS marker
                 if (!this.gpsMarker) {
                     const icon = L.divIcon({
                         className: 'gps-marker',
@@ -343,7 +502,6 @@ class MapDrawingApp {
             lng: this.currentGpsPosition.lng
         };
         
-        // Add temporary marker
         this.tempStartPoint.marker = L.circleMarker(
             [this.currentGpsPosition.lat, this.currentGpsPosition.lng],
             {
@@ -373,7 +531,6 @@ class MapDrawingApp {
         
         this.createLine(this.tempStartPoint, endPoint);
         
-        // Remove temporary marker
         this.tempStartPoint.marker.remove();
         this.tempStartPoint = null;
         
@@ -382,16 +539,23 @@ class MapDrawingApp {
     }
     
     saveDrawing() {
-        const data = this.lines.map(line => ({
-            id: line.id,
-            start: line.start,
-            end: line.end,
-            distance: line.distance,
-            depth: line.depth,
-            width: line.width,
-            excavationType: line.excavationType,
-            roadType: line.roadType
-        }));
+        const workOrderNo = document.getElementById('workOrderNo').value;
+        const workType = document.getElementById('workType').value;
+        
+        const data = {
+            workOrderNo: workOrderNo,
+            workType: workType,
+            lines: this.lines.map(line => ({
+                id: line.id,
+                start: line.start,
+                end: line.end,
+                distance: line.distance,
+                depth: line.depth,
+                width: line.width,
+                excavationType: line.excavationType,
+                roadType: line.roadType
+            }))
+        };
         
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
@@ -411,7 +575,13 @@ class MapDrawingApp {
             try {
                 const data = JSON.parse(event.target.result);
                 
-                // Clear existing lines
+                if (data.workOrderNo) {
+                    document.getElementById('workOrderNo').value = data.workOrderNo;
+                }
+                if (data.workType) {
+                    document.getElementById('workType').value = data.workType;
+                }
+                
                 this.lines.forEach(line => {
                     line.polyline.remove();
                     line.startMarker.remove();
@@ -422,8 +592,8 @@ class MapDrawingApp {
                 this.lines = [];
                 document.getElementById('linesTableBody').innerHTML = '';
                 
-                // Load lines
-                data.forEach(lineData => {
+                const linesToLoad = data.lines || data;
+                linesToLoad.forEach(lineData => {
                     this.createLineFromData(lineData);
                 });
                 
@@ -497,8 +667,13 @@ class MapDrawingApp {
     }
     
     exportToCSV() {
-        const headers = ['Line', 'Start Lat', 'Start Lng', 'End Lat', 'End Lng', 'Length (m)', 'Depth', 'Width', 'Excavation Type', 'Road Type'];
+        const workOrderNo = document.getElementById('workOrderNo').value;
+        const workType = document.getElementById('workType').value;
+        
+        const headers = ['Work Order No', 'Work Type', 'Line', 'Start Lat', 'Start Lng', 'End Lat', 'End Lng', 'Length (m)', 'Depth', 'Width', 'Excavation Type', 'Road Type'];
         const rows = this.lines.map(line => [
+            workOrderNo,
+            workType,
             line.id,
             line.start.lat.toFixed(6),
             line.start.lng.toFixed(6),
@@ -522,8 +697,13 @@ class MapDrawingApp {
     }
     
     exportToExcel() {
-        const headers = ['Line', 'Start Lat', 'Start Lng', 'End Lat', 'End Lng', 'Length (m)', 'Depth', 'Width', 'Excavation Type', 'Road Type'];
+        const workOrderNo = document.getElementById('workOrderNo').value;
+        const workType = document.getElementById('workType').value;
+        
+        const headers = ['Work Order No', 'Work Type', 'Line', 'Start Lat', 'Start Lng', 'End Lat', 'End Lng', 'Length (m)', 'Depth', 'Width', 'Excavation Type', 'Road Type'];
         const rows = this.lines.map(line => [
+            workOrderNo,
+            workType,
             line.id,
             line.start.lat.toFixed(6),
             line.start.lng.toFixed(6),
@@ -556,7 +736,6 @@ class MapDrawingApp {
     }
 }
 
-// Initialize app when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
     new MapDrawingApp();
 });
