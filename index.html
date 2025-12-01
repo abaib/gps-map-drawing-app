@@ -35,7 +35,7 @@
         }
         
         .sidebar {
-            width: 350px;
+            width: 400px;
             background: white;
             border-right: 1px solid #e5e7eb;
             display: flex;
@@ -177,8 +177,34 @@
             color: #10b981;
         }
         
+        .form-group {
+            margin-bottom: 12px;
+        }
+        
+        .form-label {
+            display: block;
+            font-size: 13px;
+            font-weight: 500;
+            color: #374151;
+            margin-bottom: 6px;
+        }
+        
+        .form-input {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        
+        .form-input:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+        
         .table-container {
-            max-height: 400px;
+            max-height: 350px;
             overflow: auto;
             border: 1px solid #e5e7eb;
             border-radius: 6px;
@@ -215,12 +241,21 @@
             background: #f9fafb;
         }
         
+        tbody tr.selected {
+            background: #dbeafe;
+        }
+        
         input[type="number"], select {
             width: 100%;
-            padding: 4px 6px;
+            padding: 6px 8px;
             border: 1px solid #d1d5db;
             border-radius: 4px;
             font-size: 12px;
+        }
+        
+        input[type="number"]:focus, select:focus {
+            outline: none;
+            border-color: #3b82f6;
         }
         
         .delete-btn {
@@ -264,6 +299,18 @@
             margin-top: 8px;
         }
         
+        .leaflet-container.map-rotate {
+            cursor: grab;
+        }
+        
+        .leaflet-container.map-rotate:active {
+            cursor: grabbing;
+        }
+        
+        .draggable-marker {
+            cursor: move !important;
+        }
+        
         @media (max-width: 768px) {
             .app-container {
                 flex-direction: column;
@@ -288,6 +335,19 @@
             </div>
             
             <div class="sidebar-content">
+                <!-- Work Order Information -->
+                <div class="section">
+                    <div class="section-title">Work Order Information</div>
+                    <div class="form-group">
+                        <label class="form-label" for="workOrderNo">Work Order No.</label>
+                        <input type="number" id="workOrderNo" class="form-input" placeholder="Enter work order number">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="workType">Work Type</label>
+                        <input type="number" id="workType" class="form-input" placeholder="Enter work type">
+                    </div>
+                </div>
+
                 <!-- Toolbar Section -->
                 <div class="section">
                     <div class="section-title">Toolbar</div>
@@ -298,8 +358,8 @@
                         <button class="btn" id="selectBtn">
                             <i class="fas fa-mouse-pointer"></i> Select
                         </button>
-                        <button class="btn" id="deleteBtn">
-                            <i class="fas fa-trash"></i> Delete
+                        <button class="btn" id="rotateBtn">
+                            <i class="fas fa-sync-alt"></i> Rotate
                         </button>
                     </div>
                 </div>
@@ -309,7 +369,7 @@
                     <div class="section-title">Map Layers</div>
                     <div class="layer-buttons">
                         <button class="btn active" id="streetBtn">
-                            <i class="fas fa-map"></i> Street Map
+                            <i class="fas fa-map"></i> Street
                         </button>
                         <button class="btn" id="satelliteBtn">
                             <i class="fas fa-satellite"></i> Satellite
@@ -346,13 +406,11 @@
                             <thead>
                                 <tr>
                                     <th>Line</th>
-                                    <th>Start Coords</th>
-                                    <th>End Coords</th>
                                     <th>Length (m)</th>
-                                    <th>Depth</th>
-                                    <th>Width</th>
-                                    <th>Excavation</th>
-                                    <th>Road Type</th>
+                                    <th style="min-width: 80px;">Depth</th>
+                                    <th style="min-width: 80px;">Width</th>
+                                    <th style="min-width: 120px;">Excavation</th>
+                                    <th style="min-width: 100px;">Road Type</th>
                                     <th>Action</th>
                                 </tr>
                             </thead>
