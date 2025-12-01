@@ -1,3 +1,4 @@
+[file content begin]
 class MapDrawingApp {
     constructor() {
         this.map = null;
@@ -102,6 +103,7 @@ class MapDrawingApp {
         document.getElementById('streetBtn').addEventListener('click', () => this.switchLayer('street'));
         document.getElementById('satelliteBtn').addEventListener('click', () => this.switchLayer('satellite'));
         
+        document.getElementById('currentLocationBtn').addEventListener('click', () => this.goToCurrentLocation());
         document.getElementById('captureStartBtn').addEventListener('click', () => this.captureStartPoint());
         document.getElementById('captureEndBtn').addEventListener('click', () => this.captureEndPoint());
         
@@ -243,61 +245,117 @@ class MapDrawingApp {
     }
     
     makeDraggable(line) {
-        line.startMarker.dragging = true;
-        line.endMarker.dragging = true;
+        // Reset any existing event listeners
+        line.startMarker.off('mousedown');
+        line.endMarker.off('mousedown');
         
-        line.startMarker.on('mousedown', () => {
-            this.isDragging = true;
-            this.draggedPoint = { line: line, point: 'start' };
+        // Make markers visually draggable
+        if (line.startMarker._icon) {
+            line.startMarker._icon.style.cursor = 'move';
+            line.startMarker._icon.classList.add('draggable-marker');
+        }
+        if (line.endMarker._icon) {
+            line.endMarker._icon.style.cursor = 'move';
+            line.endMarker._icon.classList.add('draggable-marker');
+        }
+        
+        // Store original mouse events
+        let isDraggingMarker = false;
+        let draggedMarker = null;
+        let startPos = null;
+        
+        // Start marker drag handlers
+        line.startMarker.on('mousedown', (e) => {
+            L.DomEvent.stopPropagation(e);
+            isDraggingMarker = true;
+            draggedMarker = 'start';
+            startPos = this.map.latLngToContainerPoint(e.latlng);
+            this.map.dragging.disable();
         });
         
-        line.endMarker.on('mousedown', () => {
-            this.isDragging = true;
-            this.draggedPoint = { line: line, point: 'end' };
+        // End marker drag handlers
+        line.endMarker.on('mousedown', (e) => {
+            L.DomEvent.stopPropagation(e);
+            isDraggingMarker = true;
+            draggedMarker = 'end';
+            startPos = this.map.latLngToContainerPoint(e.latlng);
+            this.map.dragging.disable();
         });
         
-        this.map.on('mousemove', (e) => {
-            if (this.isDragging && this.draggedPoint) {
-                const newPos = { lat: e.latlng.lat, lng: e.latlng.lng };
-                
-                if (this.draggedPoint.point === 'start') {
-                    line.start = newPos;
-                    line.startMarker.setLatLng([newPos.lat, newPos.lng]);
-                } else {
-                    line.end = newPos;
-                    line.endMarker.setLatLng([newPos.lat, newPos.lng]);
-                }
-                
-                line.polyline.setLatLngs([[line.start.lat, line.start.lng], [line.end.lat, line.end.lng]]);
-                
-                const midpoint = [(line.start.lat + line.end.lat) / 2, (line.start.lng + line.end.lng) / 2];
-                line.distance = this.calculateDistance(line.start.lat, line.start.lng, line.end.lat, line.end.lng);
-                
-                line.distanceLabel.setLatLng(midpoint);
-                line.distanceLabel.setIcon(L.divIcon({
-                    className: 'distance-label',
-                    html: `<div style="background: white; padding: 4px 8px; border-radius: 4px; border: 2px solid #3b82f6; font-weight: bold; font-size: 12px; white-space: nowrap;">${line.distance.toFixed(2)} m</div>`,
-                    iconSize: [60, 20]
-                }));
-                
-                this.updateTableRow(line);
+        // Map mousemove handler for dragging
+        const mouseMoveHandler = (e) => {
+            if (!isDraggingMarker || !draggedMarker) return;
+            
+            const currentPos = L.point(e.clientX, e.clientY);
+            const containerPos = this.map.containerPointToLatLng(currentPos);
+            
+            if (draggedMarker === 'start') {
+                line.start = { lat: containerPos.lat, lng: containerPos.lng };
+                line.startMarker.setLatLng([containerPos.lat, containerPos.lng]);
+            } else {
+                line.end = { lat: containerPos.lat, lng: containerPos.lng };
+                line.endMarker.setLatLng([containerPos.lat, containerPos.lng]);
             }
-        });
+            
+            // Update polyline
+            line.polyline.setLatLngs([[line.start.lat, line.start.lng], [line.end.lat, line.end.lng]]);
+            
+            // Update distance
+            line.distance = this.calculateDistance(line.start.lat, line.start.lng, line.end.lat, line.end.lng);
+            
+            // Update label
+            const midpoint = [(line.start.lat + line.end.lat) / 2, (line.start.lng + line.end.lng) / 2];
+            line.distanceLabel.setLatLng(midpoint);
+            line.distanceLabel.setIcon(L.divIcon({
+                className: 'distance-label',
+                html: `<div style="background: white; padding: 4px 8px; border-radius: 4px; border: 2px solid #f59e0b; font-weight: bold; font-size: 12px; white-space: nowrap;">${line.distance.toFixed(2)} m</div>`,
+                iconSize: [60, 20]
+            }));
+            
+            // Update table
+            this.updateTableRow(line);
+        };
         
-        this.map.on('mouseup', () => {
-            this.isDragging = false;
-            this.draggedPoint = null;
-        });
+        const mouseUpHandler = () => {
+            if (isDraggingMarker) {
+                isDraggingMarker = false;
+                draggedMarker = null;
+                startPos = null;
+                this.map.dragging.enable();
+            }
+        };
         
-        line.startMarker._icon.style.cursor = 'move';
-        line.endMarker._icon.style.cursor = 'move';
+        // Store handlers for later removal
+        line._mouseMoveHandler = mouseMoveHandler;
+        line._mouseUpHandler = mouseUpHandler;
+        
+        this.map.on('mousemove', mouseMoveHandler);
+        this.map.on('mouseup', mouseUpHandler);
+        document.addEventListener('mouseup', mouseUpHandler);
     }
     
     removeDraggable(line) {
+        // Remove event listeners
         line.startMarker.off('mousedown');
         line.endMarker.off('mousedown');
-        line.startMarker._icon.style.cursor = '';
-        line.endMarker._icon.style.cursor = '';
+        
+        if (line._mouseMoveHandler) {
+            this.map.off('mousemove', line._mouseMoveHandler);
+        }
+        if (line._mouseUpHandler) {
+            this.map.off('mouseup', line._mouseUpHandler);
+            document.removeEventListener('mouseup', line._mouseUpHandler);
+        }
+        
+        // Reset cursor
+        if (line.startMarker._icon) {
+            line.startMarker._icon.style.cursor = '';
+            line.startMarker._icon.classList.remove('draggable-marker');
+        }
+        if (line.endMarker._icon) {
+            line.endMarker._icon.style.cursor = '';
+            line.endMarker._icon.classList.remove('draggable-marker');
+        }
     }
     
     updateTableRow(line) {
@@ -454,41 +512,116 @@ class MapDrawingApp {
         
         document.getElementById('gpsStatus').textContent = 'Activating...';
         
-        this.gpsWatchId = navigator.geolocation.watchPosition(
+        // First try to get a quick position
+        navigator.geolocation.getCurrentPosition(
             (position) => {
-                const { latitude, longitude, accuracy } = position.coords;
-                
-                this.currentGpsPosition = { lat: latitude, lng: longitude };
-                
-                const statusEl = document.getElementById('gpsStatus');
-                statusEl.textContent = 'Active';
-                statusEl.classList.add('status-active');
-                
-                document.getElementById('gpsAccuracyRow').style.display = 'flex';
-                document.getElementById('gpsAccuracy').textContent = `${accuracy.toFixed(1)} m`;
-                
-                if (!this.gpsMarker) {
-                    const icon = L.divIcon({
-                        className: 'gps-marker',
-                        html: '<div class="gps-marker"></div>',
-                        iconSize: [20, 20]
-                    });
-                    
-                    this.gpsMarker = L.marker([latitude, longitude], { icon: icon }).addTo(this.map);
-                } else {
-                    this.gpsMarker.setLatLng([latitude, longitude]);
-                }
+                this.handleGPSPosition(position);
             },
             (error) => {
-                console.error('GPS Error:', error);
-                document.getElementById('gpsStatus').textContent = 'Error';
+                console.error('Initial GPS Error:', error);
+                document.getElementById('gpsStatus').textContent = 'Error - Check Permissions';
+                alert('Please enable location services and allow GPS access for this site.');
+            },
+            {
+                enableHighAccuracy: true,
+                timeout: 10000,
+                maximumAge: 0
+            }
+        );
+        
+        // Then start watching for updates
+        this.gpsWatchId = navigator.geolocation.watchPosition(
+            (position) => {
+                this.handleGPSPosition(position);
+            },
+            (error) => {
+                console.error('GPS Watch Error:', error);
+                this.handleGPSError(error);
             },
             {
                 enableHighAccuracy: true,
                 maximumAge: 0,
-                timeout: 5000
+                timeout: 10000
             }
         );
+    }
+    
+    handleGPSPosition(position) {
+        const { latitude, longitude, accuracy } = position.coords;
+        
+        this.currentGpsPosition = { lat: latitude, lng: longitude };
+        
+        const statusEl = document.getElementById('gpsStatus');
+        statusEl.textContent = 'Active';
+        statusEl.classList.add('status-active');
+        
+        document.getElementById('gpsAccuracyRow').style.display = 'flex';
+        document.getElementById('gpsAccuracy').textContent = `${accuracy.toFixed(1)} m`;
+        
+        // Remove existing GPS marker
+        if (this.gpsMarker) {
+            this.gpsMarker.remove();
+        }
+        
+        // Create new GPS marker with simplified icon (FIXED: Only one circle)
+        this.gpsMarker = L.marker([latitude, longitude], {
+            icon: L.divIcon({
+                className: 'gps-marker-container',
+                html: `<div class="gps-marker"></div>`,
+                iconSize: [20, 20],
+                iconAnchor: [10, 10]
+            }),
+            zIndexOffset: 1000
+        }).addTo(this.map);
+    }
+    
+    handleGPSError(error) {
+        let errorMessage = 'GPS Error: ';
+        switch(error.code) {
+            case error.PERMISSION_DENIED:
+                errorMessage += 'Permission denied. Please enable location services.';
+                break;
+            case error.POSITION_UNAVAILABLE:
+                errorMessage += 'Position unavailable. Check your GPS signal.';
+                break;
+            case error.TIMEOUT:
+                errorMessage += 'Request timeout. Please try again.';
+                break;
+            default:
+                errorMessage += 'Unknown error.';
+        }
+        
+        document.getElementById('gpsStatus').textContent = 'Error';
+        document.getElementById('gpsStatus').classList.remove('status-active');
+        console.error(errorMessage);
+    }
+    
+    goToCurrentLocation() {
+        if (!this.currentGpsPosition) {
+            alert('GPS position not available yet. Please wait for GPS signal or check permissions.');
+            return;
+        }
+        
+        this.map.setView([this.currentGpsPosition.lat, this.currentGpsPosition.lng], 18, {
+            animate: true,
+            duration: 1
+        });
+        
+        // Flash the GPS marker
+        if (this.gpsMarker) {
+            const originalIcon = this.gpsMarker.getIcon();
+            const flashIcon = L.divIcon({
+                className: 'gps-marker-container',
+                html: `<div class="gps-marker" style="background: #3b82f6;"></div>`,
+                iconSize: [20, 20],
+                iconAnchor: [10, 10]
+            });
+            
+            this.gpsMarker.setIcon(flashIcon);
+            setTimeout(() => {
+                this.gpsMarker.setIcon(originalIcon);
+            }, 1000);
+        }
     }
     
     captureStartPoint() {
@@ -739,3 +872,4 @@ class MapDrawingApp {
 document.addEventListener('DOMContentLoaded', () => {
     new MapDrawingApp();
 });
+[file content end]
