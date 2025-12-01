@@ -285,6 +285,10 @@
         }
         
         .gps-marker {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
             width: 20px;
             height: 20px;
             border-radius: 50%;
@@ -292,6 +296,11 @@
             border: 3px solid white;
             box-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
             animation: pulse 2s infinite;
+            z-index: 1000;
+        }
+        
+        .gps-marker-container {
+            position: relative;
         }
         
         #captureEndBtn {
@@ -380,6 +389,9 @@
                 <!-- GPS Capture Section -->
                 <div class="section">
                     <div class="section-title">GPS Capture</div>
+                    <button class="btn btn-primary" id="currentLocationBtn" style="margin-bottom: 8px;">
+                        <i class="fas fa-location-arrow"></i> Current Location
+                    </button>
                     <button class="btn btn-success" id="captureStartBtn">
                         <i class="fas fa-map-pin"></i> Capture Start Point
                     </button>
